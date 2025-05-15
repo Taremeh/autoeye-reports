@@ -10,7 +10,7 @@ export default function ReportClient({ participantId }) {
   // Toggle states for filters.
   const [filterAccepted, setFilterAccepted] = useState(false);
   const [filterDwellTime, setFilterDwellTime] = useState(false);
-  // Sorting option: "time" (ascending), "duration" (desc), or "dwelltime" (desc).
+  // Sorting option: "time" (ascending), "duration" (desc), "dwelltime" (desc), or "suggestionLength" (desc).
   const [sortOption, setSortOption] = useState("time");
   const videoRef = useRef(null);
 
@@ -52,38 +52,21 @@ export default function ReportClient({ participantId }) {
     fetchData();
   }, [participantId]);
 
-  /**
-   * getGroupKey:
-   * Normalizes a label (lowercase, trimmed) and extracts its root.
-   */
   function getGroupKey(label) {
     const normalized = label.toLowerCase().trim();
     const match = normalized.match(/^autolabel_(\d+)/);
     return match ? `autolabel_${match[1]}` : normalized;
   }
 
-  /**
-   * isBaseVersion:
-   * Returns true if the label is a base version (no extra underscore after the letter).
-   */
   function isBaseVersion(label) {
     return /^autolabel_\d+[a-z]?$/.test(label.toLowerCase().trim());
   }
 
-  /**
-   * getSubKey:
-   * For a base version like "autolabel_16a", returns the letter (e.g. "a").
-   */
   function getSubKey(label) {
     const match = label.toLowerCase().trim().match(/^autolabel_\d+([a-z])?$/);
     return match ? (match[1] || '') : '';
   }
 
-  /**
-   * parseIAS:
-   * Splits the IAS file into entries, groups them by their root label,
-   * and combines HTML content (from base versions) for rendering.
-   */
   function parseIAS(iasText, htmlMapping) {
     const lines = iasText.split('\n').filter(line => line.trim() !== '');
     const dataLines = lines[0].startsWith('#') ? lines.slice(1) : lines;
@@ -121,16 +104,13 @@ export default function ReportClient({ participantId }) {
         const fallback = entries.find(e => e.groupKey === group.groupKey);
         combinedHtml = htmlMapping[fallback.label] || '';
       }
-      return { groupKey: group.groupKey, start: group.start, end: group.end, duration: group.end - group.start, html: combinedHtml };
+      const charCount = combinedHtml.length;
+      return { groupKey: group.groupKey, start: group.start, end: group.end, duration: group.end - group.start, html: combinedHtml, charCount };
     });
 
     return result.sort((a, b) => a.start - b.start);
   }
 
-  /**
-   * parseIAReport:
-   * Parses the tab-delimited IA report TXT and aggregates viewed status and dwell time.
-   */
   function parseIAReport(reportText) {
     const lines = reportText.split(/\r?\n/).filter(line => line.trim());
     if (lines.length < 2) return {};
@@ -157,10 +137,6 @@ export default function ReportClient({ participantId }) {
     return map;
   }
 
-  /**
-   * parseSessionLog:
-   * Finds the screen-recording offset and extracts Tab key events.
-   */
   function parseSessionLog(logText) {
     const lines = logText.split(/\r?\n/).filter(l => l.trim());
     let offset = null;
@@ -187,7 +163,6 @@ export default function ReportClient({ participantId }) {
     return { offset, events };
   }
 
-  // Jump video to region start
   const handleRegionClick = startMs => {
     if (videoRef.current) {
       videoRef.current.currentTime = startMs / 1000;
@@ -213,6 +188,9 @@ export default function ReportClient({ participantId }) {
       const db = iaReportMapping[b.groupKey]?.dwellTime || 0;
       return db - da;
     }
+    if (sortOption === 'suggestionLength') {
+      return (b.charCount || 0) - (a.charCount || 0);
+    }
     return 0;
   });
 
@@ -237,6 +215,7 @@ export default function ReportClient({ participantId }) {
             <option value="time">Time (ascending)</option>
             <option value="duration">Duration (longest first)</option>
             <option value="dwelltime">Dwelltime (longest first)</option>
+            <option value="suggestionLength">Suggestion Length (longest first)</option>
           </select>
         </label>
       </div>
@@ -246,7 +225,7 @@ export default function ReportClient({ participantId }) {
       ) : (
         <div className="flex flex-col md:flex-row gap-4">
           <div className="w-full md:w-1/2">
-            <video ref={videoRef} controls className="w-full h-auto border" src={`/${participantId}/Videos/screenrecording.mp4`}>Your browser does not support the video tag.</video>
+            <video ref={videoRef} controls className="w-full h-auto border" src={`/${participantId}/Videos/screenrecording.mp4`}>Your browser does not_support the video tag.</video>
           </div>
           <div className="w-full md:w-1/2 overflow-auto max-h-[80vh]">
             {sortedRegions.map((region, idx) => {
@@ -256,7 +235,7 @@ export default function ReportClient({ participantId }) {
               return (
                 <div key={idx} className={`mb-4 border p-4 cursor-pointer hover:bg-gray-100 ${style}`} onClick={() => handleRegionClick(region.start)}>
                   <div className="meta mb-2 text-sm text-gray-600">
-                    <strong>Label:</strong> {region.groupKey} | <strong>Start:</strong> {region.start} | <strong>End:</strong> {region.end} | <strong>Duration:</strong> {region.duration}ms | <strong>Dwelltime:</strong> {ia.dwellTime}ms {accepted && <span className="ml-2 font-bold text-green-600">ACCEPTED</span>}
+                    <strong>Label:</strong> {region.groupKey} | <strong>Start:</strong> {region.start} | <strong>End:</strong> {region.end} | <strong>Duration:</strong> {region.duration}ms | <strong>Dwelltime:</strong> {ia.dwellTime}ms | <strong>Chars:</strong> {region.charCount} {accepted && <span className="ml-2 font-bold text-green-600">ACCEPTED</span>}
                   </div>
                   <div className="region-content whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: region.html }} />
                 </div>
