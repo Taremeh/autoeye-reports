@@ -177,7 +177,7 @@ export default function ReportIndex({ participantId }) {
     return () => { alive = false; };
   }, []);
 
-  // compute per-participant stats *and* keep the filteredRegions for the timeline
+  // ─── Compute per-participant stats + fullMaxEnd ──────────────────────────
   const statsList = useMemo(() => {
     const summarize = arr => {
       if (!arr.length) return { avg:0, min:0, max:0 };
@@ -186,9 +186,17 @@ export default function ReportIndex({ participantId }) {
     };
 
     return participants.map(id => {
-      if (errorsByPart[id]) return { participantId: id, error: errorsByPart[id] };
+      if (errorsByPart[id]) {
+        return { participantId: id, error: errorsByPart[id] };
+      }
 
       const regs = allRegionsByPart[id] || [];
+      // full experiment end time
+      const fullMaxEnd = regs.length
+        ? Math.max(...regs.map(r => r.start + r.duration))
+        : 0;
+
+      // apply filters
       const filtered = regs.filter(r => {
         if (filterAccepted   && !r.accepted)       return false;
         if (filterDwellTime  && r.dwellTime <= 0)   return false;
@@ -204,6 +212,7 @@ export default function ReportIndex({ participantId }) {
 
       return {
         participantId: id,
+        fullMaxEnd,
         filteredRegions: filtered,
         total,
         acceptedCount,
@@ -364,29 +373,20 @@ export default function ReportIndex({ participantId }) {
                       </div>
 
                       {/* ── Timeline Chart ─────────────────────────── */}
-                      {s.filteredRegions.length > 0 && (
+                      {s.fullMaxEnd > 0 && (
                         <div className="mt-4 h-12 w-full bg-gray-200 rounded relative overflow-hidden">
-                          {(() => {
-                            const maxEnd = Math.max(
-                              ...s.filteredRegions.map(r => r.start + r.duration)
-                            );
-                            return s.filteredRegions.map((r, i) => {
-                              const leftPct  = (r.start / maxEnd) * 100;
-                              const widthPct = (r.duration / maxEnd) * 100;
-                              return (
-                                <div
-                                  key={i}
-                                  className={`absolute top-0 h-full ${
-                                    r.accepted ? 'bg-green-500' : 'bg-red-500'
-                                  }`}
-                                  style={{
-                                    left:  `${leftPct}%`,
-                                    width: `${widthPct}%`
-                                  }}
-                                />
-                              );
-                            });
-                          })()}
+                          {s.filteredRegions.map((r, i) => (
+                            <div
+                              key={i}
+                              className={`absolute top-0 h-full ${
+                                r.accepted ? 'bg-green-500' : 'bg-red-500'
+                              }`}
+                              style={{
+                                left:  `${(r.start    / s.fullMaxEnd) * 100}%`,
+                                width: `${(r.duration / s.fullMaxEnd) * 100}%`,
+                              }}
+                            />
+                          ))}
                         </div>
                       )}
 
