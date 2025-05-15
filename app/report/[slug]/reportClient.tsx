@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 
 export default function ReportClient({ participantId }) {
   const [regions, setRegions] = useState([]);
@@ -182,9 +182,7 @@ export default function ReportClient({ participantId }) {
     if (filterAccepted && !accepted) return false;
     const ia = iaReportMapping[r.groupKey] || { dwellTime: 0 };
     if (filterDwellTime && ia.dwellTime <= 0) return false;
-    // Duration threshold
     if (durationThreshold !== '' && r.duration < Number(durationThreshold)) return false;
-    // Dwell threshold
     if (dwellThreshold !== '' && ia.dwellTime < Number(dwellThreshold)) return false;
     return true;
   });
@@ -204,9 +202,48 @@ export default function ReportClient({ participantId }) {
     return 0;
   });
 
+  // Descriptive statistics based on the filtered list
+  const stats = useMemo(() => {
+    const total = filteredRegions.length;
+    let acceptedCount = 0;
+    const durations = [];
+    const dwellTimes = [];
+
+    filteredRegions.forEach(r => {
+      const ia = iaReportMapping[r.groupKey] || { dwellTime: 0 };
+      const accepted = sessionLogEvents.some(e => e.relative >= r.start && e.relative <= r.end);
+      if (accepted) acceptedCount++;
+      durations.push(r.duration);
+      dwellTimes.push(ia.dwellTime);
+    });
+
+    const notAcceptedCount = total - acceptedCount;
+    const pct = count => total > 0 ? (count / total * 100) : 0;
+
+    const summarize = arr => {
+      if (arr.length === 0) return { avg: 0, min: 0, max: 0 };
+      const sum = arr.reduce((a, b) => a + b, 0);
+      return {
+        avg: sum / arr.length,
+        min: Math.min(...arr),
+        max: Math.max(...arr),
+      };
+    };
+
+    return {
+      total,
+      acceptedCount,
+      acceptedPct: pct(acceptedCount),
+      notAcceptedCount,
+      notAcceptedPct: pct(notAcceptedCount),
+      duration: summarize(durations),
+      dwell: summarize(dwellTimes),
+    };
+  }, [filteredRegions, iaReportMapping, sessionLogEvents]);
+
   return (
-    <div className="container mx-auto p-4 m-0 p-0">
-      <h1 className="mb-8 text-2xl font-semibold tracking-tighter mt-0">
+    <div className="container mx-auto p-4">
+      <h1 className="mb-8 text-2xl font-semibold tracking-tighter">
         AUTOEYE Individual Report:{' '}
         <span className="bg-gray-100 p-2 pb-1 pt-1">P{participantId}</span>
       </h1>
@@ -219,7 +256,7 @@ export default function ReportClient({ participantId }) {
         </label>
         <label className="flex items-center gap-2">
           <input type="checkbox" checked={filterDwellTime} onChange={e => setFilterDwellTime(e.target.checked)} />
-          Dwelltime > 0
+          Dwelltime &gt; 0
         </label>
         <label className="flex items-center gap-2">
           Min Duration (ms):
@@ -252,12 +289,37 @@ export default function ReportClient({ participantId }) {
         </label>
       </div>
 
+      {/* Descriptive Statistics */}
+      <div className="mb-6 p-4 bg-gray-50 border rounded">
+        <h2 className="text-lg font-medium mb-2">Descriptive Statistics</h2>
+        <ul className="list-none m-0 p-0 flex flex-wrap gap-6 text-sm">
+          <li><strong>Total Suggestions:</strong> {stats.total}</li>
+          <li><strong>Accepted:</strong> {stats.acceptedCount} ({stats.acceptedPct.toFixed(1)}%)</li>
+          <li><strong>Not Accepted:</strong> {stats.notAcceptedCount} ({stats.notAcceptedPct.toFixed(1)}%)</li>
+          <li>
+            <strong>Suggestion Duration (ms):</strong> avg {stats.duration.avg.toFixed(1)}, 
+            min {stats.duration.min}, max {stats.duration.max}
+          </li>
+          <li>
+            <strong>Dwelltime (ms):</strong> avg {stats.dwell.avg.toFixed(1)}, 
+            min {stats.dwell.min}, max {stats.dwell.max}
+          </li>
+        </ul>
+      </div>
+
       {loading ? (
         <p>Loading...</p>
       ) : (
         <div className="flex flex-col md:flex-row gap-4">
           <div className="w-full md:w-1/2">
-            <video ref={videoRef} controls className="w-full h-auto border" src={`/${participantId}/Videos/screenrecording.mp4`}>Your browser does not support the video tag.</video>
+            <video
+              ref={videoRef}
+              controls
+              className="w-full h-auto border"
+              src={`/${participantId}/Videos/screenrecording.mp4`}
+            >
+              Your browser does not support the video tag.
+            </video>
           </div>
           <div className="w-full md:w-1/2 overflow-auto max-h-[80vh]">
             {sortedRegions.map((region, idx) => {
@@ -265,11 +327,21 @@ export default function ReportClient({ participantId }) {
               const accepted = sessionLogEvents.some(e => e.relative >= region.start && e.relative <= region.end);
               const style = ia.viewed ? 'bg-gray-200' : 'opacity-50';
               return (
-                <div key={idx} className={`mb-4 border p-4 cursor-pointer hover:bg-gray-100 ${style}`} onClick={() => handleRegionClick(region.start)}>
+                <div
+                  key={idx}
+                  className={`mb-4 border p-4 cursor-pointer hover:bg-gray-100 ${style}`}
+                  onClick={() => handleRegionClick(region.start)}
+                >
                   <div className="meta mb-2 text-sm text-gray-600">
-                    <strong>Label:</strong> {region.groupKey} | <strong>Start:</strong> {region.start} | <strong>End:</strong> {region.end} | <strong>Duration:</strong> {region.duration}ms | <strong>Dwelltime:</strong> {ia.dwellTime}ms | <strong>Chars:</strong> {region.charCount} {accepted && <span className="ml-2 font-bold text-green-600">ACCEPTED</span>}
+                    <strong>Label:</strong> {region.groupKey} | <strong>Start:</strong> {region.start} | <strong>End:</strong> {region.end} |{' '}
+                    <strong>Duration:</strong> {region.duration}ms | <strong>Dwelltime:</strong> {ia.dwellTime}ms |{' '}
+                    <strong>Chars:</strong> {region.charCount}
+                    {accepted && <span className="ml-2 font-bold text-green-600">ACCEPTED</span>}
                   </div>
-                  <div className="region-content whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: region.html }} />
+                  <div
+                    className="region-content whitespace-pre-wrap break-words"
+                    dangerouslySetInnerHTML={{ __html: region.html }}
+                  />
                 </div>
               );
             })}
