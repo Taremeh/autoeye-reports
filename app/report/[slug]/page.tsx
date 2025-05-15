@@ -11,6 +11,29 @@ export default function Page({ params }) {
 
 // Static params for Next.js to generate pages at build time.
 export const generateStaticParams = () => {
-  const participantIds = ['tarek5', '210201', '040301'];
+  const participantIds = [
+    'tarek5', // '210201', '040301', '040302', '050304',
+    '040301',
+    '040302',
+    '050302',
+    '050303',
+    '050304',
+    '060301',
+    '070301',
+    '100301',
+    '100302',
+    '110301',
+    '120301',
+    '120302',
+    '130301',
+    '130302',
+    '140302',
+    '190301',
+    '200301',
+    '200302',
+    '210201',
+    '210301',
+    '210302',   
+  ];
   return participantIds.map((id) => ({ slug: id }));
 };

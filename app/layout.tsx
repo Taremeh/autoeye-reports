@@ -45,13 +45,14 @@ export default function RootLayout({
       lang="en"
       className={cx(
         //'text-black bg-white dark:text-white dark:bg-black', // dark mode
-        'text-black bg-white', // light mode
+        'text-black bg-white p-0 px-0', // light mode
         GeistSans.variable,
         GeistMono.variable
       )}
+
     >
-      <body className="antialiased max-w-full mx-4 mt-8 lg:mx-auto">
-        <main className="flex-auto min-w-0 mt-6 flex flex-col px-2 md:px-0 pt-4 pb-24">
+      <body className="antialiased max-w-full m-0 lg:mx-auto">
+        <main className="flex-auto min-w-0 flex flex-col px-2 md:px-0">
           {/* <Navbar /> */}
           {children}
           {/* <Footer /> */}

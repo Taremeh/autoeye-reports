@@ -7,9 +7,14 @@ export default function ReportClient({ participantId }) {
   const [iaReportMapping, setIaReportMapping] = useState({});
   const [sessionLogEvents, setSessionLogEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+
   // Toggle states for filters.
   const [filterAccepted, setFilterAccepted] = useState(false);
   const [filterDwellTime, setFilterDwellTime] = useState(false);
+  // Threshold filters (ms)
+  const [durationThreshold, setDurationThreshold] = useState('');
+  const [dwellThreshold, setDwellThreshold] = useState('');
+
   // Sorting option: "time" (ascending), "duration" (desc), "dwelltime" (desc), or "suggestionLength" (desc).
   const [sortOption, setSortOption] = useState("time");
   const videoRef = useRef(null);
@@ -17,7 +22,6 @@ export default function ReportClient({ participantId }) {
   useEffect(() => {
     async function fetchData() {
       try {
-        // Fetch IAS file, HTML mapping JSON, IA report (txt), and Session log concurrently.
         const [iasRes, htmlRes, iaReportRes, sessionLogRes] = await Promise.all([
           fetch(`/${participantId}/output_${participantId}.ias`),
           fetch(`/${participantId}/html_${participantId}.json`),
@@ -27,20 +31,15 @@ export default function ReportClient({ participantId }) {
 
         const iasText = await iasRes.text();
         const htmlMapping = await htmlRes.json();
-
-        // IA report is now a UTF-8 text file
         const iaReportText = await iaReportRes.text();
-
-        // Read and parse session log
         const sessionLogText = await sessionLogRes.text();
+
         const { offset, events } = parseSessionLog(sessionLogText);
         setSessionLogEvents(events);
 
-        // Parse IA report into mapping
         const reportMapping = parseIAReport(iaReportText);
         setIaReportMapping(reportMapping);
 
-        // Parse IAS file into regions
         const parsedRegions = parseIAS(iasText, htmlMapping);
         setRegions(parsedRegions);
       } catch (err) {
@@ -95,20 +94,27 @@ export default function ReportClient({ participantId }) {
       }
     });
 
-    const result = Object.values(groups).map(group => {
-      let combinedHtml = '';
-      if (group.baseEntries.length) {
-        group.baseEntries.sort((a, b) => getSubKey(a.label).localeCompare(getSubKey(b.label)));
-        combinedHtml = group.baseEntries.map(e => htmlMapping[e.label] || '').join('<br />');
-      } else {
-        const fallback = entries.find(e => e.groupKey === group.groupKey);
-        combinedHtml = htmlMapping[fallback.label] || '';
-      }
-      const charCount = combinedHtml.length;
-      return { groupKey: group.groupKey, start: group.start, end: group.end, duration: group.end - group.start, html: combinedHtml, charCount };
-    });
-
-    return result.sort((a, b) => a.start - b.start);
+    return Object.values(groups)
+      .map(group => {
+        let combinedHtml = '';
+        if (group.baseEntries.length) {
+          group.baseEntries.sort((a, b) => getSubKey(a.label).localeCompare(getSubKey(b.label)));
+          combinedHtml = group.baseEntries.map(e => htmlMapping[e.label] || '').join('<br />');
+        } else {
+          const fallback = entries.find(e => e.groupKey === group.groupKey);
+          combinedHtml = htmlMapping[fallback.label] || '';
+        }
+        const charCount = combinedHtml.length;
+        return {
+          groupKey: group.groupKey,
+          start: group.start,
+          end: group.end,
+          duration: group.end - group.start,
+          html: combinedHtml,
+          charCount,
+        };
+      })
+      .sort((a, b) => a.start - b.start);
   }
 
   function parseIAReport(reportText) {
@@ -176,6 +182,10 @@ export default function ReportClient({ participantId }) {
     if (filterAccepted && !accepted) return false;
     const ia = iaReportMapping[r.groupKey] || { dwellTime: 0 };
     if (filterDwellTime && ia.dwellTime <= 0) return false;
+    // Duration threshold
+    if (durationThreshold !== '' && r.duration < Number(durationThreshold)) return false;
+    // Dwell threshold
+    if (dwellThreshold !== '' && ia.dwellTime < Number(dwellThreshold)) return false;
     return true;
   });
 
@@ -195,23 +205,45 @@ export default function ReportClient({ participantId }) {
   });
 
   return (
-    <div className="container mx-auto p-4">
-      <h1 className="mb-8 text-2xl font-semibold tracking-tighter">
+    <div className="container mx-auto p-4 m-0 p-0">
+      <h1 className="mb-8 text-2xl font-semibold tracking-tighter mt-0">
         AUTOEYE Individual Report:{' '}
         <span className="bg-gray-100 p-2 pb-1 pt-1">P{participantId}</span>
       </h1>
 
       {/* Filters */}
-      <div className="mb-4">
-        <label className="mr-4">
-          <input type="checkbox" checked={filterAccepted} onChange={e => setFilterAccepted(e.target.checked)} /> Accepted
+      <div className="mb-4 flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={filterAccepted} onChange={e => setFilterAccepted(e.target.checked)} />
+          Accepted
         </label>
-        <label className="mr-4">
-          <input type="checkbox" checked={filterDwellTime} onChange={e => setFilterDwellTime(e.target.checked)} /> Dwelltime &gt; 0
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={filterDwellTime} onChange={e => setFilterDwellTime(e.target.checked)} />
+          Dwelltime > 0
         </label>
-        <label>
-          Sort by:{' '}
-          <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="ml-2">
+        <label className="flex items-center gap-2">
+          Min Duration (ms):
+          <input
+            type="number"
+            value={durationThreshold}
+            onChange={e => setDurationThreshold(e.target.value)}
+            placeholder="e.g. 500"
+            className="ml-2 w-24 border rounded p-1 text-sm"
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          Min Dwelltime (ms):
+          <input
+            type="number"
+            value={dwellThreshold}
+            onChange={e => setDwellThreshold(e.target.value)}
+            placeholder="e.g. 200"
+            className="ml-2 w-24 border rounded p-1 text-sm"
+          />
+        </label>
+        <label className="flex items-center gap-2">
+          Sort by:
+          <select value={sortOption} onChange={e => setSortOption(e.target.value)} className="ml-2 border rounded p-1 text-sm">
             <option value="time">Time (ascending)</option>
             <option value="duration">Duration (longest first)</option>
             <option value="dwelltime">Dwelltime (longest first)</option>
@@ -225,7 +257,7 @@ export default function ReportClient({ participantId }) {
       ) : (
         <div className="flex flex-col md:flex-row gap-4">
           <div className="w-full md:w-1/2">
-            <video ref={videoRef} controls className="w-full h-auto border" src={`/${participantId}/Videos/screenrecording.mp4`}>Your browser does not_support the video tag.</video>
+            <video ref={videoRef} controls className="w-full h-auto border" src={`/${participantId}/Videos/screenrecording.mp4`}>Your browser does not support the video tag.</video>
           </div>
           <div className="w-full md:w-1/2 overflow-auto max-h-[80vh]">
             {sortedRegions.map((region, idx) => {
