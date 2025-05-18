@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Label } from 'recharts';
+import { ResponsiveContainer, ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Label, Bar, BarChart } from 'recharts';
 
 
 
@@ -305,25 +305,25 @@ export default function ReportIndex({ participantId }) {
   // ── Compute data for bucket-size vs. suggestion-ratio plot ────────────────
   const bucketAcceptanceData = useMemo(() => {
     const regs = Object.values(allRegionsByPart).flat().filter(r => {
-      if (filterAccepted   && !r.accepted)     return false;
-      if (filterDwellTime  && r.dwellTime <= 0) return false;
-      if (durationThreshold !== '' && r.duration < +durationThreshold) return false;
-      if (dwellThreshold     !== '' && r.dwellTime < +dwellThreshold)   return false;
+      if (filterAccepted   && !(r as any).accepted)     return false;
+      if (filterDwellTime  && (r as any).dwellTime <= 0) return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)   return false;
       return true;
     });
 
     const bucketMs = bucketSize * 1000;
     const maxTime = regs.length
-      ? Math.max(...regs.map(r => r.start + r.duration))
+      ? Math.max(...regs.map(r => (r as any).start + (r as any).duration))
       : 0;
     const buckets = Math.ceil(maxTime / bucketMs);
 
     return Array.from({ length: buckets }, (_, i) => {
       const startMs = i * bucketMs;
       const endMs   = startMs + bucketMs;
-      const slice   = regs.filter(r => r.start >= startMs && r.start < endMs);
+      const slice   = regs.filter(r => (r as any).start >= startMs && (r as any).start < endMs);
       const tot     = slice.length;
-      const acc     = slice.filter(r => r.accepted).length;
+      const acc     = slice.filter(r => (r as any).accepted).length;
       return { 
         start: +(i * bucketSize).toFixed(2),   // in seconds
         rate: tot > 0 ? acc / tot : null 
@@ -335,7 +335,110 @@ export default function ReportIndex({ participantId }) {
     durationThreshold, dwellThreshold,
     bucketSize
   ]);
+  
+  // ── Compute cumulative suggestion‐length vs acceptance ratio ─────────────────
+  const suggestionLengthData = useMemo(() => {
+    const regs = Object.values(allRegionsByPart).flat();
+    if (!regs.length) return [];
 
+    // determine overall max and split into 50 bins
+    const maxChar  = Math.max(...regs.map(r => (r as any).charCount));
+    const binCount = 50;
+    const binSize  = Math.ceil(maxChar / binCount);
+
+    return Array.from({ length: binCount + 1 }, (_, i) => {
+      const threshold = i * binSize;
+      const slice     = regs.filter(r => (r as any).charCount >= threshold);
+      const total     = slice.length;
+      const acc       = slice.filter(r => (r as any).accepted).length;
+      return {
+        threshold,
+        count: total,
+        acceptanceRatio: total > 0 ? acc / total : null,
+        binSize           // include for caption/tokenization if you like
+      };
+    });
+  }, [allRegionsByPart]);
+
+  // ── Compute histogram of suggestion lengths ──────────────────────────────
+  const suggestionLengthHistogram = useMemo(() => {
+    const regs = Object.values(allRegionsByPart).flat();
+    if (!regs.length) return [];
+    const maxChar  = Math.max(...regs.map(r => (r as any).charCount));
+    const binCount = 50;
+    const binSize  = Math.ceil(maxChar / binCount);
+
+    return Array.from({ length: binCount }, (_, i) => {
+      const binStart = i * binSize;
+      const binEnd   = binStart + binSize;
+      const count    = regs.filter(
+        r => (r as any).charCount >= binStart && (r as any).charCount < binEnd
+      ).length;
+      return { binStart, binEnd, count };
+    });
+  }, [allRegionsByPart]);
+
+  // ── Compute cumulative avg dwell‐time by suggestion length ─────────────────
+  const suggestionLengthDwellData = useMemo(() => {
+    const regs = Object.values(allRegionsByPart).flat();
+    if (!regs.length) return [];
+
+    // same binning as length thresholds
+    const maxChar  = Math.max(...regs.map(r => (r as any).charCount));
+    const binCount = 50;
+    const binSize  = Math.ceil(maxChar / binCount);
+
+    return Array.from({ length: binCount + 1 }, (_, i) => {
+      const threshold = i * binSize;
+      const slice     = regs.filter(r => (r as any).charCount >= threshold);
+      const count     = slice.length;
+      const sumDwell  = slice.reduce((sum, r) => sum + (r as any).dwellTime, 0);
+      const avgDwell  = count > 0 ? (sumDwell as any) / count : null;
+
+      return { threshold, count, avgDwell };
+    });
+  }, [allRegionsByPart]);
+
+
+  // ── Compute cumulative avg normalized dwell‐time over task timeline ────────
+  const bucketNormalizedDwellData = useMemo(() => {
+    // flatten + apply the same filters you use for acceptance
+    const regs = Object.values(allRegionsByPart).flat().filter(r => {
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <= 0)   return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)   return false;
+      return true;
+    });
+
+    const bucketMs = bucketSize * 1000;
+    const maxTime  = regs.length
+      ? Math.max(...regs.map(r => (r as any).start + (r as any).duration))
+      : 0;
+    const buckets  = Math.ceil(maxTime / bucketMs);
+
+    return Array.from({ length: buckets }, (_, i) => {
+      const startMs = i * bucketMs;
+      const slice   = regs.filter(r => (r as any).start >= startMs && (r as any).start < startMs + bucketMs);
+      const count   = slice.length;
+      // normalized dwell time in seconds per char
+      const sumNorm = slice.reduce(
+        (sum, r) => (sum as any) + ((r as any).dwellTime / 1000) / (r as any).charCount,
+        0
+      );
+      const avgNorm = count > 0 ? (sumNorm as any) / count : null;
+
+      return {
+        start: +(i * bucketSize).toFixed(2),  // seconds
+        avgNorm,
+      };
+    });
+  }, [
+    allRegionsByPart,
+    filterAccepted, filterDwellTime,
+    durationThreshold, dwellThreshold,
+    bucketSize
+  ]);
 
 
 
@@ -421,34 +524,36 @@ export default function ReportIndex({ participantId }) {
               <h3 className="text-lg font-medium mb-2">
                 Duration Threshold vs % Remaining Suggestions
               </h3>
-              <LineChart
-                width={500}
-                height={200}
-                data={suggestionRatioData}
-                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}  // ← extra left space
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="duration"
-                  tick={{ fontSize: 12 }}
-                  label={{ value: 'Duration Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
-                />
-                <YAxis
-                  domain={[0, 1]}
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart
+                  // width={500}
+                  // height={200}
+                  data={suggestionRatioData}
+                  margin={{ top: 20, right: 20, bottom: 20, left: 80 }}  // ← extra left space
                 >
-                  <Label
-                    value="% of Suggestions Remaining"
-                    angle={-90}
-                    position="insideLeft"
-                    style={{ fontSize: 11, textAnchor: 'start' }}
-                    dy={80}                                     // ← lift text to top
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="duration"
+                    tick={{ fontSize: 12 }}
+                    label={{ value: 'Duration Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
                   />
-                </YAxis>
-                <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
-                <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
-              </LineChart>
+                  <YAxis
+                    domain={[0, 1]}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+                  >
+                    <Label
+                      value="% of Suggestions Remaining"
+                      angle={-90}
+                      position="insideLeft"
+                      style={{ fontSize: 11, textAnchor: 'start' }}
+                      dy={80}                                     // ← lift text to top
+                    />
+                  </YAxis>
+                  <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
+                  <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </figure>
 
             {/* Dwell-time */}
@@ -459,34 +564,36 @@ export default function ReportIndex({ participantId }) {
               <h3 className="text-lg font-medium mb-2">
                 Dwell-time Threshold vs % Remaining Suggestions
               </h3>
-              <LineChart
-                width={500}
-                height={200}
-                data={dwellRatioData}
-                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="dwell"
-                  tick={{ fontSize: 12 }}
-                  label={{ value: 'Dwell-time Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
-                />
-                <YAxis
-                  domain={[0, 1]}
-                  tick={{ fontSize: 12 }}
-                  tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart
+                  // width={500}
+                  // height={200}
+                  data={dwellRatioData}
+                  margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
                 >
-                  <Label
-                    value="% of Suggestions Remaining"
-                    angle={-90}
-                    position="insideLeft"
-                    style={{ fontSize: 11, textAnchor: 'start' }}
-                    dy={80}
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="dwell"
+                    tick={{ fontSize: 12 }}
+                    label={{ value: 'Dwell-time Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
                   />
-                </YAxis>
-                <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
-                <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
-              </LineChart>
+                  <YAxis
+                    domain={[0, 1]}
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+                  >
+                    <Label
+                      value="% of Suggestions Remaining"
+                      angle={-90}
+                      position="insideLeft"
+                      style={{ fontSize: 11, textAnchor: 'start' }}
+                      dy={80}
+                    />
+                  </YAxis>
+                  <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
+                  <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </figure>
           </div>
 
@@ -518,41 +625,347 @@ export default function ReportIndex({ participantId }) {
               />
               <span>s</span> ({(bucketSize/60).toFixed(1)}min)
             </label>
-            <LineChart
-              width={1000}
-              height={200}
-              data={bucketAcceptanceData}
-              margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis
-                dataKey="start"
-                tick={{ fontSize: 12 }}
-                tickFormatter={v => `${(v/60).toFixed(1)}min`}
-                label={{
-                  value: 'Task Duration Timeline (min)',
-                  position: 'insideBottom',
-                  offset: -10,
-                  style: { fontSize: 12 }
-                }}
-              />
-              <YAxis /* …same as before… */>
-                <Label
-                  value="% Suggestions Accepted"
-                  angle={-90}
-                  position="insideLeft"
-                  style={{ fontSize: 12, textAnchor: 'start' }}
-                  dy={75}
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart
+                // width={1000}
+                // height={200}
+                data={bucketAcceptanceData}
+                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="start"
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={v => `${(v/60).toFixed(1)}min`}
+                  label={{
+                    value: 'Task Duration Timeline (min)',
+                    position: 'insideBottom',
+                    offset: -10,
+                    style: { fontSize: 12 }
+                  }}
                 />
-              </YAxis>
-              <Tooltip
-                formatter={v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`)}
-                labelFormatter={v => `${(v/60).toFixed(1)}min – ${((v + bucketSize)/60).toFixed(1)}min`}
+                <YAxis /* …same as before… */>
+                  <Label
+                    value="% Suggestions Accepted"
+                    angle={-90}
+                    position="insideLeft"
+                    style={{ fontSize: 12, textAnchor: 'start' }}
+                    dy={75}
+                  />
+                </YAxis>
+                <Tooltip
+                  formatter={v => (v == null ? '–' : `${((v as any) * 100).toFixed(1)}%`)}
+                  labelFormatter={v => `${(v/60).toFixed(1)}min – ${((v + bucketSize)/60).toFixed(1)}min`}
+                />
+                <Line type="monotone" dataKey="rate" stroke="#ff7300" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* ── Bucket Size vs. Normalized Dwell Time ─────────────────────────────── */}
+          <div className="mt-6">
+            <h3 className="text-lg font-medium mb-2">
+              Avg Normalized Dwell Time Over Time (Buckets of {(bucketSize/60).toFixed(1)} min)
+            </h3>
+            <label className="flex items-center gap-2 mb-4">
+              Bucket Size (s):
+              <input
+                type="range"
+                min={5}
+                max={1200}
+                step={1}
+                value={bucketSize}
+                onChange={e => setBucketSize(+e.target.value)}
+                className="mx-2"
               />
-              <Line type="monotone" dataKey="rate" stroke="#ff7300" dot={false} />
-            </LineChart>
+              <input
+                type="number"
+                min={5}
+                max={1200}
+                step={1}
+                value={bucketSize}
+                onChange={e => setBucketSize(e.target.value === '' ? 1 : Number(e.target.value))}
+                className="w-16 border rounded p-1 text-sm"
+              />
+              <span>s</span> ({(bucketSize/60).toFixed(1)} min)
+            </label>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart
+                data={bucketNormalizedDwellData}
+                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="start"
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={v => `${(v/60).toFixed(1)}min`}
+                  label={{
+                    value: 'Task Duration Timeline (min)',
+                    position: 'insideBottom',
+                    offset: -10,
+                    style: { fontSize: 12 }
+                  }}
+                />
+                <YAxis
+                  tick={{ fontSize: 12 }}
+                  label={{
+                    value: 'Avg Dwell (s/char)',
+                    angle: -90,
+                    position: 'insideLeft',
+                    style: { fontSize: 12, textAnchor: 'start' },
+                    dy: 75
+                  }}
+                />
+                <Tooltip
+                  labelFormatter={v => `${(v/60).toFixed(1)}min – ${((v + bucketSize)/60).toFixed(1)}min`}
+                  formatter={val =>
+                    val == null
+                      ? ['–', 'Avg Norm. Dwell']
+                      : [`${(val as any).toFixed(4)} s/char`, 'Avg Norm. Dwell']
+                  }
+                />
+                <Line
+                  type="monotone"
+                  dataKey="avgNorm"
+                  stroke="#82ca9d"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+
+
+          {/* —————————————————————————————————————— */}
+          {/* Side-by-Side Suggestion-Length Charts */}
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Cumulative Acceptance by Suggestion Length */}
+            <div>
+              <h3 className="text-lg font-medium mb-2">
+                Cumulative Acceptance Ratio by Suggestion Length
+              </h3>
+              <figcaption className="text-sm text-gray-600 mb-4">
+                We split all suggestions up to the maximum length into 50 bins of&nbsp;
+                {suggestionLengthData[1]?.binSize ?? '–'} chars each.  
+                Each point shows **all** suggestions ≥ that threshold:  
+                bars = how many suggestions meet the threshold,  
+                line = what percentage of them were accepted.  
+                A cumulative curve makes it easy to pick the minimum length at which acceptance stays high.
+              </figcaption>
+              <ResponsiveContainer width="100%" height={200}>
+                <ComposedChart
+                  data={suggestionLengthData}
+                  margin={{ top:20, right:20, bottom:20, left:80 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="threshold"
+                    tick={{ fontSize:12 }}
+                    label={{
+                      value: 'Min Suggestion Length (chars)',
+                      position: 'insideBottom',
+                      offset: -10,
+                      style: { fontSize:12 }
+                    }}
+                  />
+                  {/* Left Y: cumulative % accepted */}
+                  <YAxis
+                    yAxisId="left"
+                    domain={[0,1]}
+                    tick={{ fontSize:12 }}
+                    tickFormatter={v => `${(v*100).toFixed(0)}%`}
+                  >
+                    <Label
+                      value="% Accepted (≥ threshold)"
+                      angle={-90}
+                      position="insideLeft"
+                      style={{ fontSize:11, textAnchor:'start' }}
+                      dy={80}
+                    />
+                  </YAxis>
+                  {/* Right Y: count of suggestions */}
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize:12 }}
+                  >
+                    <Label
+                      value="Count (≥ threshold)"
+                      angle={-90}
+                      position="insideRight"
+                      style={{ fontSize:11, textAnchor:'end' }}
+                      dy={-25}
+                    />
+                  </YAxis>
+                  <Tooltip
+                    labelFormatter={(threshold) => `Chars ≥ ${threshold}`}
+                    formatter={(val, name) => {
+                      if (name === 'acceptanceRatio')
+                        return [`${((val as any) * 100).toFixed(1)}%`, '% Accepted'];
+                      return [val, 'Count'];
+                    }}
+                  />
+                  {/* bars for counts */}
+                  <Bar
+                    yAxisId="right"
+                    dataKey="count"
+                    barSize={20}
+                    fill="#bbb"
+                  />
+                  {/* line for cumulative ratio */}
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="acceptanceRatio"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Histogram of Suggestion Lengths */}
+            <div>
+              <h3 className="text-lg font-medium mb-2">Histogram of Suggestion Lengths</h3>
+              <figcaption className="text-sm text-gray-600 mb-4">
+                Shows how many suggestions fall into each character‐length bin (bin size ≈ 
+                {suggestionLengthHistogram[0]?.binEnd ?? '–'} chars). <br/><br/><br/>
+              </figcaption>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart
+                  data={suggestionLengthHistogram}
+                  margin={{ top: 20, right: 20, bottom: 20, left: 40 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="binStart"
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={v => `${v}`}
+                    label={{
+                      value: 'Chars (start of bin)',
+                      position: 'insideBottom',
+                      offset: -10,
+                      style: { fontSize: 12 }
+                    }}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    label={{
+                      value: 'Count',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { fontSize: 12, textAnchor: 'middle' }
+                    }}
+                  />
+                  <Tooltip
+                    labelFormatter={(value, payload) => {
+                      if (!payload?.length) return '';
+                      const { binStart, binEnd } = payload[0].payload;
+                      return `Chars ${binStart}–${binEnd}`;
+                    }}
+                    formatter={val => [val, 'Count']}
+                  />
+                  <Bar
+                    dataKey="count"
+                    barSize={Math.max(2, suggestionLengthHistogram[0]?.binEnd / 4)}
+                    fill="#8884d8"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Cumulative Avg Dwell Time by Suggestion Length */}
+            <div>
+              <h3 className="text-lg font-medium mb-2">
+                Cumulative Avg Dwell Time by Suggestion Length
+              </h3>
+              <figcaption className="text-sm text-gray-600 mb-4">
+                We use the same 50 bins of&nbsp;
+                {suggestionLengthData[1]?.binSize ?? '–'} chars each.  
+                Each point shows **all** suggestions ≥ that length threshold:  
+                bars = how many suggestions meet the threshold,  
+                line = their average dwell‐time (ms).  
+                A cumulative view helps you see how dwell‐time evolves as suggestion length increases.
+              </figcaption>
+              <ResponsiveContainer width="100%" height={200}>
+                <ComposedChart
+                  data={suggestionLengthDwellData}
+                  margin={{ top:20, right:20, bottom:20, left:80 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+
+                  <XAxis
+                    dataKey="threshold"
+                    tick={{ fontSize:12 }}
+                    label={{
+                      value: 'Min Suggestion Length (chars)',
+                      position: 'insideBottom',
+                      offset: -10,
+                      style: { fontSize:12 }
+                    }}
+                  />
+
+                  {/* Left Y: avg dwell-time */}
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize:12 }}
+                    tickFormatter={v => `${v.toFixed(0)}ms`}
+                  >
+                    <Label
+                      value="Avg Dwell Time (ms)"
+                      angle={-90}
+                      position="insideLeft"
+                      style={{ fontSize:11, textAnchor:'start' }}
+                      dy={80}
+                      offset={-10}
+                    />
+                  </YAxis>
+
+                  {/* Right Y: count */}
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize:12 }}
+                  >
+                    <Label
+                      value="Count (≥ threshold)"
+                      angle={-90}
+                      position="insideRight"
+                      style={{ fontSize:11, textAnchor:'end' }}
+                      dy={-20}
+                    />
+                  </YAxis>
+
+                  <Tooltip
+                    labelFormatter={threshold => `Chars ≥ ${threshold}`}
+                    formatter={(val, name) => {
+                      if (name === 'avgDwell')
+                        return [`${(val as any).toFixed(1)}ms`, 'Avg Dwell'];
+                      return [val, 'Count'];
+                    }}
+                  />
+
+                  {/* bars for counts */}
+                  <Bar
+                    yAxisId="right"
+                    dataKey="count"
+                    barSize={20}
+                    fill="#bbb"
+                  />
+
+                  {/* line for avg dwell */}
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="avgDwell"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
 
           </div>
+
+
 
 
           {/* Participant List */}
