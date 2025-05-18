@@ -1,6 +1,11 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Label } from 'recharts';
+
+
+
+
 import Link from 'next/link';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,21 +46,25 @@ function parseIAS(iasText, htmlMap) {
     if (isBaseVersion(e.label)) groups[key].baseEntries.push(e);
   });
 
-  return Object.values(groups)
+  type Group = {
+    baseEntries: { label: string }[];
+  };
+
+  return Object.values(groups as Group[])
     .map(g => {
       let html = '';
       if (g.baseEntries.length) {
         g.baseEntries.sort((a,b) => getSubKey(a.label).localeCompare(getSubKey(b.label)));
         html = g.baseEntries.map(e => htmlMap[e.label] || '').join('<br/>');
       } else {
-        const fall = entries.find(x => getGroupKey(x.label) === g.groupKey);
+        const fall = entries.find(x => getGroupKey(x.label) === (g as any).groupKey);
         html = htmlMap[fall.label] || '';
       }
       return {
-        groupKey: g.groupKey,
-        start: g.start,
-        end: g.end,
-        duration: g.end - g.start,
+        groupKey: (g as any).groupKey,
+        start: (g as any).start,
+        end: (g as any).end,
+        duration: (g as any).end - (g as any).start,
         html,
         charCount: html.length,
       };
@@ -151,6 +160,7 @@ export default function ReportIndex({ participantId }) {
   const [filterDwellTime, setFilterDwellTime] = useState(false);
   const [durationThreshold, setDurationThreshold] = useState('');
   const [dwellThreshold, setDwellThreshold]       = useState('');
+  const [bucketSize, setBucketSize] = useState(600);  // bucket size in s
 
   useEffect(() => {
     let alive = true;
@@ -165,8 +175,8 @@ export default function ReportIndex({ participantId }) {
       const regionsObj = {};
       const errorsObj  = {};
       results.forEach(r => {
-        if (r.error) errorsObj[r.id] = r.error;
-        else         regionsObj[r.id] = r.regs;
+        if ((r as any).error) errorsObj[r.id] = (r as any).error;
+        else         regionsObj[r.id] = (r as any).regs;
       });
 
       setAllRegionsByPart(regionsObj);
@@ -237,14 +247,14 @@ export default function ReportIndex({ participantId }) {
     };
     const allRegs = Object.values(allRegionsByPart).flat();
     const fr = allRegs.filter(r => {
-      if (filterAccepted   && !r.accepted)       return false;
-      if (filterDwellTime  && r.dwellTime <= 0)   return false;
-      if (durationThreshold !== '' && r.duration < +durationThreshold) return false;
-      if (dwellThreshold     !== '' && r.dwellTime < +dwellThreshold)   return false;
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <= 0)   return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)   return false;
       return true;
     });
     const total = fr.length;
-    const acceptedCount = fr.filter(r=>r.accepted).length;
+    const acceptedCount = fr.filter(r=>(r as any).accepted).length;
     const notAcceptedCount = total - acceptedCount;
     const pct = x => total>0 ? (x/total*100) : 0;
     return {
@@ -253,14 +263,81 @@ export default function ReportIndex({ participantId }) {
       acceptedPct: pct(acceptedCount),
       notAcceptedCount,
       notAcceptedPct: pct(notAcceptedCount),
-      durationSummary: summarize(fr.map(r=>r.duration)),
-      dwellSummary:   summarize(fr.map(r=>r.dwellTime)),
+      durationSummary: summarize(fr.map(r=>(r as any).duration)),
+      dwellSummary:   summarize(fr.map(r=>(r as any).dwellTime)),
     };
   }, [
     allRegionsByPart,
     filterAccepted, filterDwellTime,
     durationThreshold, dwellThreshold
   ]);
+
+  // ── Compute data for duration-threshold vs. suggestion-ratio plot ───────────
+  const suggestionRatioData = useMemo(() => {
+    // flatten all regions into one array
+    const regs = Object.values(allRegionsByPart).flat();
+    const originalTotal = regs.length;
+    // build an array [{ duration: 0, ratio: 1 }, { duration: 10, ratio: 0.98 }, …, {duration:1000, ratio:0}]
+    return Array.from({ length: 101 }, (_, i) => {
+      const duration = i * 10;
+      const count = regs.filter(r => (r as any).duration >= duration).length;
+      return {
+        duration,
+        ratio: originalTotal > 0 ? count / originalTotal : 0
+      };
+    });
+  }, [allRegionsByPart]);
+
+  // ── Compute data for dwelltime-threshold vs. suggestion-ratio plot ────────
+  const dwellRatioData = useMemo(() => {
+    const regs = Object.values(allRegionsByPart).flat();
+    const originalTotal = regs.length;
+    return Array.from({ length: 1001 }, (_, i) => {
+      const dwell = i * 1;
+      const count = regs.filter(r => (r as any).dwellTime >= dwell).length;
+      return {
+        dwell,
+        ratio: originalTotal > 0 ? count / originalTotal : 0
+      };
+    });
+  }, [allRegionsByPart]);
+
+  // ── Compute data for bucket-size vs. suggestion-ratio plot ────────────────
+  const bucketAcceptanceData = useMemo(() => {
+    const regs = Object.values(allRegionsByPart).flat().filter(r => {
+      if (filterAccepted   && !r.accepted)     return false;
+      if (filterDwellTime  && r.dwellTime <= 0) return false;
+      if (durationThreshold !== '' && r.duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && r.dwellTime < +dwellThreshold)   return false;
+      return true;
+    });
+
+    const bucketMs = bucketSize * 1000;
+    const maxTime = regs.length
+      ? Math.max(...regs.map(r => r.start + r.duration))
+      : 0;
+    const buckets = Math.ceil(maxTime / bucketMs);
+
+    return Array.from({ length: buckets }, (_, i) => {
+      const startMs = i * bucketMs;
+      const endMs   = startMs + bucketMs;
+      const slice   = regs.filter(r => r.start >= startMs && r.start < endMs);
+      const tot     = slice.length;
+      const acc     = slice.filter(r => r.accepted).length;
+      return { 
+        start: +(i * bucketSize).toFixed(2),   // in seconds
+        rate: tot > 0 ? acc / tot : null 
+      };
+    });
+  }, [
+    allRegionsByPart,
+    filterAccepted, filterDwellTime,
+    durationThreshold, dwellThreshold,
+    bucketSize
+  ]);
+
+
+
 
   return (
     <div className="p-4">
@@ -333,6 +410,150 @@ export default function ReportIndex({ participantId }) {
               </div>
             </div>
           )}
+
+          {/* ── Threshold vs. Remaining Suggestions (side by side) ───────────────── */}
+          <div className="mt-6 flex flex-wrap gap-6">
+            {/* Duration */}
+            <figure className="flex-1 min-w-[300px]">
+              <figcaption className="text-sm text-gray-600 mb-2">
+                Percentage of all suggestions whose duration ≥ the given threshold
+              </figcaption>
+              <h3 className="text-lg font-medium mb-2">
+                Duration Threshold vs % Remaining Suggestions
+              </h3>
+              <LineChart
+                width={500}
+                height={200}
+                data={suggestionRatioData}
+                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}  // ← extra left space
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="duration"
+                  tick={{ fontSize: 12 }}
+                  label={{ value: 'Duration Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
+                />
+                <YAxis
+                  domain={[0, 1]}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+                >
+                  <Label
+                    value="% of Suggestions Remaining"
+                    angle={-90}
+                    position="insideLeft"
+                    style={{ fontSize: 11, textAnchor: 'start' }}
+                    dy={80}                                     // ← lift text to top
+                  />
+                </YAxis>
+                <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
+                <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
+              </LineChart>
+            </figure>
+
+            {/* Dwell-time */}
+            <figure className="flex-1 min-w-[300px]">
+              <figcaption className="text-sm text-gray-600 mb-2">
+                Percentage of all suggestions whose dwell-time ≥ the given threshold
+              </figcaption>
+              <h3 className="text-lg font-medium mb-2">
+                Dwell-time Threshold vs % Remaining Suggestions
+              </h3>
+              <LineChart
+                width={500}
+                height={200}
+                data={dwellRatioData}
+                margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="dwell"
+                  tick={{ fontSize: 12 }}
+                  label={{ value: 'Dwell-time Threshold (ms)', position: 'insideBottom', offset: -10, style: { fontSize: 12 } }}
+                />
+                <YAxis
+                  domain={[0, 1]}
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={v => `${(v * 100).toFixed(0)}%`}
+                >
+                  <Label
+                    value="% of Suggestions Remaining"
+                    angle={-90}
+                    position="insideLeft"
+                    style={{ fontSize: 11, textAnchor: 'start' }}
+                    dy={80}
+                  />
+                </YAxis>
+                <Tooltip formatter={v => `${((v as any) * 100).toFixed(1)}%`} />
+                <Line type="monotone" dataKey="ratio" stroke="#8884d8" dot={false} />
+              </LineChart>
+            </figure>
+          </div>
+
+
+          {/* ── Bucket Size vs. Acceptance Rate ─────────────────────────────────── */}  
+          <div className="mt-6">
+            <h3 className="text-lg font-medium mb-2">
+              Acceptance Rate Over Time (Buckets of {(bucketSize/60).toFixed(1)}min)
+            </h3>
+            <label className="flex items-center gap-2">
+              Bucket Size (s):
+              <input
+                type="range"
+                min={5}
+                max={1200}
+                step={1}
+                value={bucketSize}
+                onChange={e => setBucketSize(+e.target.value)}
+                className="mx-2"
+              />
+              <input
+                type="number"
+                min={5}
+                max={1200}
+                step={1}
+                value={bucketSize}
+                onChange={e => setBucketSize(e.target.value === '' ? 1 : Number(e.target.value))}
+                className="w-16 border rounded p-1 text-sm"
+              />
+              <span>s</span> ({(bucketSize/60).toFixed(1)}min)
+            </label>
+            <LineChart
+              width={1000}
+              height={200}
+              data={bucketAcceptanceData}
+              margin={{ top: 20, right: 20, bottom: 20, left: 80 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis
+                dataKey="start"
+                tick={{ fontSize: 12 }}
+                tickFormatter={v => `${(v/60).toFixed(1)}min`}
+                label={{
+                  value: 'Task Duration Timeline (min)',
+                  position: 'insideBottom',
+                  offset: -10,
+                  style: { fontSize: 12 }
+                }}
+              />
+              <YAxis /* …same as before… */>
+                <Label
+                  value="% Suggestions Accepted"
+                  angle={-90}
+                  position="insideLeft"
+                  style={{ fontSize: 12, textAnchor: 'start' }}
+                  dy={75}
+                />
+              </YAxis>
+              <Tooltip
+                formatter={v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`)}
+                labelFormatter={v => `${(v/60).toFixed(1)}min – ${((v + bucketSize)/60).toFixed(1)}min`}
+              />
+              <Line type="monotone" dataKey="rate" stroke="#ff7300" dot={false} />
+            </LineChart>
+
+          </div>
+
 
           {/* Participant List */}
           <nav className="mb-8">

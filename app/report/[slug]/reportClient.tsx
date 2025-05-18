@@ -7,6 +7,7 @@ export default function ReportClient({ participantId }) {
   const [iaReportMapping, setIaReportMapping] = useState({});
   const [sessionLogEvents, setSessionLogEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [videoDuration, setVideoDuration] = useState(0);
 
   // Toggle states for filters.
   const [filterAccepted, setFilterAccepted] = useState(false);
@@ -51,6 +52,12 @@ export default function ReportClient({ participantId }) {
     fetchData();
   }, [participantId]);
 
+  const fullDuration = useMemo(() => {
+    if (!regions.length) return 0;
+    return Math.max(...regions.map(r => r.end));
+  }, [regions]);
+  const timelineDuration = videoDuration || fullDuration;
+
   function getGroupKey(label) {
     const normalized = label.toLowerCase().trim();
     const match = normalized.match(/^autolabel_(\d+)/);
@@ -94,22 +101,26 @@ export default function ReportClient({ participantId }) {
       }
     });
 
-    return Object.values(groups)
+    type Group = {
+      baseEntries: { label: string }[];
+    };
+
+    return Object.values(groups as Group[])
       .map(group => {
         let combinedHtml = '';
         if (group.baseEntries.length) {
           group.baseEntries.sort((a, b) => getSubKey(a.label).localeCompare(getSubKey(b.label)));
           combinedHtml = group.baseEntries.map(e => htmlMapping[e.label] || '').join('<br />');
         } else {
-          const fallback = entries.find(e => e.groupKey === group.groupKey);
+          const fallback = entries.find(e => e.groupKey === (group as any).groupKey);
           combinedHtml = htmlMapping[fallback.label] || '';
         }
         const charCount = combinedHtml.length;
         return {
-          groupKey: group.groupKey,
-          start: group.start,
-          end: group.end,
-          duration: group.end - group.start,
+          groupKey: (group as any).groupKey,
+          start: (group as any).start,
+          end: (group as any).end,
+          duration: (group as any).end - (group as any).start,
           html: combinedHtml,
           charCount,
         };
@@ -176,6 +187,12 @@ export default function ReportClient({ participantId }) {
     }
   };
 
+  function handleTimelineClick(startMs, idx) {
+    handleRegionClick(startMs);
+    const el = document.getElementById(`suggestion-${idx}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
   // Apply filters
   const filteredRegions = regions.filter(r => {
     const accepted = sessionLogEvents.some(e => e.relative >= r.start && e.relative <= r.end);
@@ -208,10 +225,21 @@ export default function ReportClient({ participantId }) {
     let acceptedCount = 0;
     const durations = [];
     const dwellTimes = [];
+    const acceptedDurations = [];
+    const acceptedDwellTimes = [];
+    const notAcceptedDurations = [];
+    const notAcceptedDwellTimes = [];
 
     filteredRegions.forEach(r => {
       const ia = iaReportMapping[r.groupKey] || { dwellTime: 0 };
       const accepted = sessionLogEvents.some(e => e.relative >= r.start && e.relative <= r.end);
+      if (accepted) {
+        acceptedDurations.push(r.duration);
+        acceptedDwellTimes.push(ia.dwellTime);
+      } else {
+        notAcceptedDurations.push(r.duration);
+        notAcceptedDwellTimes.push(ia.dwellTime);
+      }
       if (accepted) acceptedCount++;
       durations.push(r.duration);
       dwellTimes.push(ia.dwellTime);
@@ -230,6 +258,9 @@ export default function ReportClient({ participantId }) {
       };
     };
 
+    // helper for just average
+    const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
     return {
       total,
       acceptedCount,
@@ -238,6 +269,10 @@ export default function ReportClient({ participantId }) {
       notAcceptedPct: pct(notAcceptedCount),
       duration: summarize(durations),
       dwell: summarize(dwellTimes),
+      avgDurationAccepted: avg(acceptedDurations),
+      avgDwellAccepted:      avg(acceptedDwellTimes),
+      avgDurationNotAccepted: avg(notAcceptedDurations),
+      avgDwellNotAccepted:   avg(notAcceptedDwellTimes),
     };
   }, [filteredRegions, iaReportMapping, sessionLogEvents]);
 
@@ -304,6 +339,10 @@ export default function ReportClient({ participantId }) {
             <strong>Dwelltime (ms):</strong> avg {stats.dwell.avg.toFixed(1)}, 
             min {stats.dwell.min}, max {stats.dwell.max}
           </li>
+        <li><strong>Avg Duration (Accepted):</strong> {stats.avgDurationAccepted.toFixed(1)}ms</li>
+        <li><strong>Avg Dwelltime (Accepted):</strong> {stats.avgDwellAccepted.toFixed(1)}ms</li>
+        <li><strong>Avg Duration (Not Accepted):</strong> {stats.avgDurationNotAccepted.toFixed(1)}ms</li>
+        <li><strong>Avg Dwelltime (Not Accepted):</strong> {stats.avgDwellNotAccepted.toFixed(1)}ms</li>
         </ul>
       </div>
 
@@ -320,16 +359,33 @@ export default function ReportClient({ participantId }) {
             >
               Your browser does not support the video tag.
             </video>
+            {timelineDuration > 0 && (
+              <div className="mt-4">
+                <div className="relative h-12 bg-gray-200 rounded">
+                  {sortedRegions.map((region, idx) => {
+                    const accepted = sessionLogEvents.some(e => e.relative >= region.start && e.relative <= region.end);
+                    const left = (region.start / timelineDuration) * 100;
+                    const width = (region.duration / timelineDuration) * 100;
+                    return (
+                      <div key={idx} id={`timeline-${idx}`} className={`${accepted ? 'bg-green-600' : 'bg-red-600'} absolute h-full rounded cursor-pointer`} style={{ left: `${left}%`, width: `${width}%` }} onClick={() => handleTimelineClick(region.start, idx)} title={`${region.groupKey} (${region.duration}ms)`} />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
           <div className="w-full md:w-1/2 overflow-auto max-h-[80vh]">
             {sortedRegions.map((region, idx) => {
               const ia = iaReportMapping[region.groupKey] || { viewed: false, dwellTime: 0 };
               const accepted = sessionLogEvents.some(e => e.relative >= region.start && e.relative <= region.end);
-              const style = ia.viewed ? 'bg-gray-200' : 'opacity-50';
+              const borderColor = accepted ? 'border-green-600' : 'border-red-600';
+              const bgColor = accepted ? 'bg-green-100' : 'bg-red-100';
+              const viewStyle = ia.viewed ? 'bg-gray-200' : 'opacity-50';
               return (
                 <div
                   key={idx}
-                  className={`mb-4 border p-4 cursor-pointer hover:bg-gray-100 ${style}`}
+                  id={`suggestion-${idx}`}
+                  className={`mb-4 border p-4 cursor-pointer hover:opacity-80 ${borderColor} ${bgColor} ${viewStyle}`}
                   onClick={() => handleRegionClick(region.start)}
                 >
                   <div className="meta mb-2 text-sm text-gray-600">

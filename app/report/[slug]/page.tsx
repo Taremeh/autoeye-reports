@@ -2,7 +2,7 @@
 import dynamic from 'next/dynamic';
 
 // Dynamically import the client component without server-side rendering.
-const ReportClient = dynamic(() => import('./ReportClient'), { ssr: false });
+const ReportClient = dynamic(() => import('./reportClient'), { ssr: false });
 
 export default function Page({ params }) {
   const participantId = params.slug;
