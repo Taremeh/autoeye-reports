@@ -73,6 +73,17 @@ export default function ReportClient({ participantId }) {
     return match ? (match[1] || '') : '';
   }
 
+  /**
+   * Turn an HTML snippet into plain text, decoding entities
+   * and preserving literal characters.
+   */
+  function getTextFromHtml(html) {
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    return container.textContent || '';
+  }
+
+
   function parseIAS(iasText, htmlMapping) {
     const lines = iasText.split('\n').filter(line => line.trim() !== '');
     const dataLines = lines[0].startsWith('#') ? lines.slice(1) : lines;
@@ -115,7 +126,10 @@ export default function ReportClient({ participantId }) {
           const fallback = entries.find(e => e.groupKey === (group as any).groupKey);
           combinedHtml = htmlMapping[fallback.label] || '';
         }
-        const charCount = combinedHtml.length;
+        
+        const text = getTextFromHtml(combinedHtml);
+        const charCount = text.length;
+
         return {
           groupKey: (group as any).groupKey,
           start: (group as any).start,

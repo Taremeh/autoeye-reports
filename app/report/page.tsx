@@ -22,6 +22,16 @@ function getSubKey(label) {
   const m = label.toLowerCase().trim().match(/^autolabel_\d+([a-z])?$/);
   return m ? (m[1] || '') : '';
 }
+/** 
+ * Turn an HTML snippet into its plain-text equivalent.
+ * Decodes entities and drops tags, but preserves literal chars.
+ */
+function getTextFromHtml(html) {
+  const container = document.createElement('div');
+  container.innerHTML = html;
+  return container.textContent || '';
+}
+
 
 function parseIAS(iasText, htmlMap) {
   const lines = iasText.split('\n').filter(l => l.trim());
@@ -60,13 +70,23 @@ function parseIAS(iasText, htmlMap) {
         const fall = entries.find(x => getGroupKey(x.label) === (g as any).groupKey);
         html = htmlMap[fall.label] || '';
       }
+
+      // derive a text-only version for counting
+      const text = getTextFromHtml(html);
+
+      // console.log("")
+      // console.log(html)
+      // console.log("---")
+      // console.log(text)
+      // console.log("")
+
       return {
         groupKey: (g as any).groupKey,
         start: (g as any).start,
         end: (g as any).end,
         duration: (g as any).end - (g as any).start,
         html,
-        charCount: html.length,
+        charCount: text.length,
       };
     })
     .sort((a,b) => a.start - b.start);
@@ -145,9 +165,9 @@ async function computeRegions(participantId) {
 
 // ── Index Component ─────────────────────────────────────────────────────────
 
-export default function ReportIndex({ participantId }) {
+export default function ReportIndex() {
   const participants = [
-    'tarek5','040301','040302','050302','050303','050304','060301','070301',
+    '040301','040302','050302','050303','050304','060301','070301',
     '100301','100302','110301','120301','120302','130301','130302','140302',
     '190301','200301','200302','210201','210301','210302'
   ];
@@ -321,12 +341,13 @@ export default function ReportIndex({ participantId }) {
     return Array.from({ length: buckets }, (_, i) => {
       const startMs = i * bucketMs;
       const endMs   = startMs + bucketMs;
-      const slice   = regs.filter(r => (r as any).start >= startMs && (r as any).start < endMs);
-      const tot     = slice.length;
-      const acc     = slice.filter(r => (r as any).accepted).length;
-      return { 
-        start: +(i * bucketSize).toFixed(2),   // in seconds
-        rate: tot > 0 ? acc / tot : null 
+      const slice = regs.filter(r => (r as any).start >= startMs && (r as any).start < endMs);
+      const tot   = slice.length;
+      const acc   = slice.filter(r => (r as any).accepted).length;
+      return {
+        start: +(i * bucketSize).toFixed(2),    // seconds
+        rate:  tot > 0 ? acc / tot : null,
+        count: tot,
       };
     });
   }, [
@@ -338,7 +359,16 @@ export default function ReportIndex({ participantId }) {
   
   // ── Compute cumulative suggestion‐length vs acceptance ratio ─────────────────
   const suggestionLengthData = useMemo(() => {
-    const regs = Object.values(allRegionsByPart).flat();
+    const regs = Object.values(allRegionsByPart)
+    .flat()
+    .filter(r => {
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <=   0) return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)     return false;
+      return true;
+    });
+
     if (!regs.length) return [];
 
     // determine overall max and split into 50 bins
@@ -358,11 +388,26 @@ export default function ReportIndex({ participantId }) {
         binSize           // include for caption/tokenization if you like
       };
     });
-  }, [allRegionsByPart]);
+  }, [
+    allRegionsByPart,
+    filterAccepted,
+    filterDwellTime,
+    durationThreshold,
+    dwellThreshold
+  ]);
 
   // ── Compute histogram of suggestion lengths ──────────────────────────────
   const suggestionLengthHistogram = useMemo(() => {
-    const regs = Object.values(allRegionsByPart).flat();
+    const regs = Object.values(allRegionsByPart)
+    .flat()
+    .filter(r => {
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <=   0) return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)     return false;
+      return true;
+    });
+
     if (!regs.length) return [];
     const maxChar  = Math.max(...regs.map(r => (r as any).charCount));
     const binCount = 50;
@@ -376,11 +421,26 @@ export default function ReportIndex({ participantId }) {
       ).length;
       return { binStart, binEnd, count };
     });
-  }, [allRegionsByPart]);
+  }, [
+    allRegionsByPart,
+    filterAccepted,
+    filterDwellTime,
+    durationThreshold,
+    dwellThreshold
+  ]);
 
   // ── Compute cumulative avg dwell‐time by suggestion length ─────────────────
   const suggestionLengthDwellData = useMemo(() => {
-    const regs = Object.values(allRegionsByPart).flat();
+    const regs = Object.values(allRegionsByPart)
+    .flat()
+    .filter(r => {
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <=   0) return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)     return false;
+      return true;
+    });
+
     if (!regs.length) return [];
 
     // same binning as length thresholds
@@ -397,7 +457,13 @@ export default function ReportIndex({ participantId }) {
 
       return { threshold, count, avgDwell };
     });
-  }, [allRegionsByPart]);
+  }, [
+    allRegionsByPart,
+    filterAccepted,
+    filterDwellTime,
+    durationThreshold,
+    dwellThreshold
+  ]);
 
 
   // ── Compute cumulative avg normalized dwell‐time over task timeline ────────
@@ -440,6 +506,42 @@ export default function ReportIndex({ participantId }) {
     bucketSize
   ]);
 
+  // ── Compute cumulative avg normalized dwell (ms per char) by suggestion length ──────
+  const suggestionLengthNormDwellData = useMemo(() => {
+    const regs = Object.values(allRegionsByPart)
+    .flat()
+    .filter(r => {
+      if (filterAccepted   && !(r as any).accepted)       return false;
+      if (filterDwellTime  && (r as any).dwellTime <=   0) return false;
+      if (durationThreshold !== '' && (r as any).duration < +durationThreshold) return false;
+      if (dwellThreshold     !== '' && (r as any).dwellTime < +dwellThreshold)     return false;
+      return true;
+    });
+
+    if (!regs.length) return [];
+
+    const maxChar  = Math.max(...regs.map(r => (r as any).charCount));
+    const binCount = 50;
+    const binSize  = Math.ceil(maxChar / binCount);
+
+    return Array.from({ length: binCount + 1 }, (_, i) => {
+      const threshold = i * binSize;
+      const slice     = regs.filter(r => (r as any).charCount >= threshold);
+      const count     = slice.length;
+      const sumNorm   = slice.reduce((sum, r) => (sum as any) + ((r as any).dwellTime / (r as any).charCount), 0);
+      const avgNorm   = count > 0 ? (sumNorm as any) / count : null;
+
+      return { threshold, count, avgNorm, binSize };
+    });
+  }, [
+    allRegionsByPart,
+    filterAccepted,
+    filterDwellTime,
+    durationThreshold,
+    dwellThreshold
+  ]);
+
+
 
 
   return (
@@ -451,7 +553,7 @@ export default function ReportIndex({ participantId }) {
       ) : (
         <>
           {/* Filters */}
-          <div className="mb-6 flex flex-wrap items-center gap-4">
+          <div className="sticky top-0 bg-white z-10 mb-6 flex flex-wrap items-center gap-4 px-4 py-2">
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -653,10 +755,24 @@ export default function ReportIndex({ participantId }) {
                     dy={75}
                   />
                 </YAxis>
-                <Tooltip
+                {/* <Tooltip
                   formatter={v => (v == null ? '–' : `${((v as any) * 100).toFixed(1)}%`)}
                   labelFormatter={v => `${(v/60).toFixed(1)}min – ${((v + bucketSize)/60).toFixed(1)}min`}
-                />
+                /> */}
+                <Tooltip 
+                  // we get the payload for this point, unpack rate & count:
+                  content={({ payload, label }) => {
+                    if (!payload?.length) return null;
+                    const { rate, count } = payload[0].payload;
+                    return (
+                      <div className="recharts-default-tooltip" style={{ padding: 8 }}>
+                        <div><strong>Time:</strong> {(label/60).toFixed(1)}–{((label+bucketSize)/60).toFixed(1)} min</div>
+                        <div><strong>Acceptance:</strong> {rate == null ? '–' : `${(rate*100).toFixed(1)}%`}</div>
+                        <div><strong># Suggestions:</strong> {count}</div>
+                      </div>
+                    );
+                  }}
+                  />
                 <Line type="monotone" dataKey="rate" stroke="#ff7300" dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -962,6 +1078,97 @@ export default function ReportIndex({ participantId }) {
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+
+            {/* Cumulative Normalized Dwell Time by Suggestion Length */}
+            <div>
+              <h3 className="text-lg font-medium mb-2">
+                Cumulative Normalized Dwell Time by Suggestion Length
+              </h3>
+              <figcaption className="text-sm text-gray-600 mb-4">
+                Same 50 bins of&nbsp;
+                {suggestionLengthNormDwellData[1]?.binSize ?? '–'} chars each.  
+                Each point shows **all** suggestions ≥ that length:  
+                bars = how many meet the threshold,  
+                line = average dwell‐time **per character** (ms/char).  
+                Normalizing lets you see if longer snippets get disproportionately more attention per char.
+              </figcaption>
+              <ResponsiveContainer width="100%" height={200}>
+                <ComposedChart
+                  data={suggestionLengthNormDwellData}
+                  margin={{ top:20, right:20, bottom:20, left:80 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+
+                  <XAxis
+                    dataKey="threshold"
+                    tick={{ fontSize:12 }}
+                    label={{
+                      value: 'Min Suggestion Length (chars)',
+                      position: 'insideBottom',
+                      offset: -10,
+                      style: { fontSize:12 }
+                    }}
+                  />
+
+                  {/* Left Y: avg norm. dwell (ms/char) */}
+                  <YAxis
+                    yAxisId="left"
+                    tick={{ fontSize:12 }}
+                    tickFormatter={v => `${v.toFixed(2)}ms/char`}
+                  >
+                    <Label
+                      value="Avg Norm Dwell (ms/char)"
+                      angle={-90}
+                      position="insideLeft"
+                      style={{ fontSize:11, textAnchor:'start' }}
+                      dy={80}
+                      offset={-35}
+                    />
+                  </YAxis>
+
+                  {/* Right Y: count */}
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize:12 }}
+                  >
+                    <Label
+                      value="Count (≥ threshold)"
+                      angle={-90}
+                      position="insideRight"
+                      style={{ fontSize:11, textAnchor:'end' }}
+                      dy={-20}
+                    />
+                  </YAxis>
+
+                  <Tooltip
+                    labelFormatter={threshold => `Chars ≥ ${threshold}`}
+                    formatter={(val, name) => {
+                      if (name === 'avgNorm')
+                        return [`${(val as any).toFixed(2)}ms/char`, 'Avg Norm Dwell'];
+                      return [val, 'Count'];
+                    }}
+                  />
+
+                  {/* bars of counts */}
+                  <Bar
+                    yAxisId="right"
+                    dataKey="count"
+                    barSize={20}
+                    fill="#bbb"
+                  />
+
+                  {/* line of normalized dwell */}
+                  <Line
+                    yAxisId="left"
+                    type="monotone"
+                    dataKey="avgNorm"
+                    dot={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+
 
           </div>
 
