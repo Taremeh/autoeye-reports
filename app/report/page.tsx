@@ -3,9 +3,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { ResponsiveContainer, ComposedChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Label, Bar, BarChart } from 'recharts';
 
-
-
-
 import Link from 'next/link';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -542,6 +539,60 @@ export default function ReportIndex() {
   ]);
 
 
+  // ── Average wasted dwell per participant ────────────────────────────────
+  const avgWastedPerParticipant = useMemo(() => {
+    // for each participant, sum dwellTime for non‐accepted suggestions, then average
+    const totalWasted = participants.reduce((sum, id) => {
+      const regs = allRegionsByPart[id] || [];
+      const filtered = regs.filter(r => {
+        if (filterAccepted   && !r.accepted)       return false;
+        if (filterDwellTime  && r.dwellTime <= 0)   return false;
+        if (durationThreshold !== '' && r.duration < +durationThreshold) return false;
+        if (dwellThreshold     !== '' && r.dwellTime < +dwellThreshold)   return false;
+        return true;
+      });
+      const wasted = filtered
+        .filter(r => !r.accepted)
+        .reduce((s, r) => s + r.dwellTime, 0);
+      return sum + wasted;
+    }, 0);
+
+    return participants.length > 0
+      ? totalWasted / participants.length
+      : 0;
+  }, [
+    allRegionsByPart,
+    filterAccepted, filterDwellTime,
+    durationThreshold, dwellThreshold
+  ]);
+
+
+  // ── Average dwell on accepted suggestions per participant ────────────────
+  const avgAcceptedDwellPerParticipant = useMemo(() => {
+    // for each participant, sum dwellTime for accepted suggestions, then average
+    const totalAcceptedDwell = participants.reduce((sum, id) => {
+      const regs = allRegionsByPart[id] || [];
+      const filtered = regs.filter(r => {
+        if (filterAccepted   && !r.accepted)       return false;
+        if (filterDwellTime  && r.dwellTime <= 0)   return false;
+        if (durationThreshold !== '' && r.duration < +durationThreshold) return false;
+        if (dwellThreshold     !== '' && r.dwellTime < +dwellThreshold)   return false;
+        return true;
+      });
+      const acceptedDwell = filtered
+        .filter(r => r.accepted)
+        .reduce((s, r) => s + r.dwellTime, 0);
+      return sum + acceptedDwell;
+    }, 0);
+
+    return participants.length > 0
+      ? totalAcceptedDwell / participants.length
+      : 0;
+  }, [
+    allRegionsByPart,
+    filterAccepted, filterDwellTime,
+    durationThreshold, dwellThreshold
+  ]);
 
 
   return (
@@ -611,6 +662,12 @@ export default function ReportIndex() {
                 <div>
                   <strong>Dwell(ms):</strong> avg {overall.dwellSummary.avg.toFixed(1)}, 
                   min {overall.dwellSummary.min}, max {overall.dwellSummary.max}
+                </div>
+                <div>
+                  <strong>Avg Wasted Dwell per Participant (s):</strong> {(avgWastedPerParticipant/1000).toFixed(1)}s
+                </div>
+                <div>
+                  <strong>Avg Dwell on Accepted per Participant (s):</strong> {(avgAcceptedDwellPerParticipant/1000).toFixed(1)}s
                 </div>
               </div>
             </div>
