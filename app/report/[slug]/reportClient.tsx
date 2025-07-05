@@ -35,6 +35,7 @@ export default function ReportClient({ participantId }) {
         const iaReportText = await iaReportRes.text();
         const sessionLogText = await sessionLogRes.text();
 
+        // 4) parse & set state as before
         const { offset, events } = parseSessionLog(sessionLogText);
         setSessionLogEvents(events);
 
@@ -143,6 +144,7 @@ export default function ReportClient({ participantId }) {
   }
 
   function parseIAReport(reportText) {
+    reportText = reportText.replace(/\u0000/g, '').replace(/^\uFEFF/, '');
     const lines = reportText.split(/\r?\n/).filter(line => line.trim());
     if (lines.length < 2) return {};
 
